@@ -159,66 +159,21 @@ const screens = {
 const canvas = document.getElementById('expCanvas');
 const ctx = canvas.getContext('2d', { alpha: false });
 
-// --- 身份证号掩蔽 & SubjectID 自动生成 ---
-let realIdCard = ''; // 存储真实身份证号（掩蔽显示时仍保留原值）
-
-const idCardInput = document.getElementById('subIdCard');
-const phoneInput = document.getElementById('subPhone');
+// --- 匿名被试编号：仅依据组别生成，不收集任何个人信息 ---
 const subjectIDInput = document.getElementById('subjectID');
-
-// 身份证号：输入时更新真实值
-idCardInput.addEventListener('input', () => {
-    realIdCard = idCardInput.value;
-    updateSubjectID();
-});
-// 聚焦时恢复真实值便于编辑
-idCardInput.addEventListener('focus', () => {
-    idCardInput.value = realIdCard;
-});
-// 失焦时掩蔽显示（前4位 + * + 后6位）
-idCardInput.addEventListener('blur', () => {
-    realIdCard = idCardInput.value;
-    if (realIdCard.length > 10) {
-        idCardInput.value = realIdCard.substring(0, 4)
-            + '*'.repeat(realIdCard.length - 10)
-            + realIdCard.substring(realIdCard.length - 6);
-    }
-});
-
-// 手机号变化时更新 SubjectID
-phoneInput.addEventListener('input', updateSubjectID);
-
-// 调试模式复选框监听：勾选时自动填充默认调试信息
-const debugModeCheckbox = document.getElementById('debugMode');
-if (debugModeCheckbox) {
-    debugModeCheckbox.addEventListener('change', (e) => {
-        if (e.target.checked) {
-            const nameEl = document.getElementById('subName');
-            const genderEl = document.getElementById('subGender');
-            const ageEl = document.getElementById('subAge');
-            if (nameEl) nameEl.value = '1';
-            if (genderEl) genderEl.value = '女';
-            if (ageEl) ageEl.value = '1';
-            realIdCard = '111111111111111111';
-            if (idCardInput) idCardInput.value = '1111********111111';
-            if (phoneInput) phoneInput.value = '11111111111';
-            if (subjectIDInput) subjectIDInput.value = '1111';
-        }
-    });
+const subGroupInput = document.getElementById('subGroup');
+function generateSubjectID(subGroupValue) {
+    const group = normalizeDigits(subGroupValue);
+    if (group === '0') return '1111';
+    const order = String(Math.floor(Math.random() * 1000)).padStart(3, '0');
+    const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    const suffix = Array.from({ length: 3 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join('');
+    return `${group}_${order}_${suffix}`;
 }
-
 function updateSubjectID() {
-    subjectIDInput.value = buildSubjectID();
+    if (subjectIDInput && subGroupInput) subjectIDInput.value = /^[012]$/.test(normalizeDigits(subGroupInput.value)) ? generateSubjectID(subGroupInput.value) : '';
 }
-
-function buildSubjectID() {
-    const idVal = realIdCard || idCardInput.value || '';
-    const phoneVal = phoneInput.value || '';
-    if (idVal.length >= 6 && phoneVal.length >= 4) {
-        return idVal.slice(-6) + phoneVal.slice(-4);
-    }
-    return '';
-}
+if (subGroupInput) subGroupInput.addEventListener('input', updateSubjectID);
 
 // 掩蔽身份证号（用于数据导出，保护隐私）
 function maskIdCard(idCard) {
@@ -263,7 +218,7 @@ document.getElementById('start-btn').addEventListener('click', async () => {
     // HTML 侧已用 pattern="[12]" + required 做第一层拦截，这里再显式校验一次：
     // 一是兜住全角数字与粘贴带空格的情况，二是把合法取值告诉被试（页面上不写）。
     const subGroupValue = readSubGroup();
-    if (!/^[12]$/.test(subGroupValue)) {
+    if (!/^[012]$/.test(subGroupValue)) {
         alert('组别填写有误，请按主试安排填写：\n' + GROUP_LABELS[1] + '\n' + GROUP_LABELS[2]);
         const subGroupInput = document.getElementById('subGroup');
         if (subGroupInput && subGroupInput.focus) subGroupInput.focus();
@@ -271,34 +226,22 @@ document.getElementById('start-btn').addEventListener('click', async () => {
     }
     p.subGroup = Number(subGroupValue);
 
-    p.subName = document.getElementById('subName').value;
-    p.subGender = document.getElementById('subGender').value;
-    p.subAge = document.getElementById('subAge').value;
-    p.subIdCard = realIdCard || idCardInput.value; // 使用真实身份证号
-    p.subPhone = document.getElementById('subPhone').value;
-    // 被试编号：点击开始时按规则由当前输入框的值重新生成一次
-    // （不依赖 input 事件，浏览器自动填充 / 程序赋值也能正确生成）
-    if (buildSubjectID()) subjectIDInput.value = buildSubjectID();
-    // 严格按「身份证后6位 + 手机后4位」的原始数字字符串保存，不做 parseInt
-    // （否则前导 0 会被吞掉，如 0701231234 变成 701231234）
-    const generatedID = String(subjectIDInput.value || '').trim();
-    p.subjectID = generatedID || String(Date.now());
-    if (!generatedID) {
-        // 身份证号不足 6 位或手机号不足 4 位时无法按规则生成编号，
-        // 只能退回时间戳。明确告警，避免事后把「一串数字」误当成随机种子。
-        console.warn('[' + EXPERIMENT_NAME + '] 被试编号无法按规则生成（身份证号需 ≥6 位、手机号需 ≥4 位），' +
-            '已退回时间戳：' + p.subjectID);
-    }
-    // 随机种子：用字符串编号派生（Number 转换仅用于 PRNG 内部，不影响编号本身）
-    const seedNum = Number(p.subjectID);
+    p.subName = '';
+    p.subGender = '';
+    p.subAge = '';
+    p.subIdCard = '';
+    p.subPhone = '';
+    // 匿名编号由组别生成；0 为固定调试编号。
+    p.subjectID = generateSubjectID(subGroupValue);
+    if (subjectIDInput) subjectIDInput.value = p.subjectID;
+    const seedNum = Number.parseInt(p.subjectID.replace(/\D/g, '').slice(-9), 10);
     p.rndSeed = Number.isFinite(seedNum) ? seedNum : Date.now();
     // 本地保存 Excel 始终开启（与 exp1_clt 一致：默认行为，setup 阶段不提供点选卡，
     //   避免被试误关导致数据丢失；服务器 / JATOS 上传逻辑照常运行）
     p.saveLocal = true;
 
     // 全角折算复用 normalizeDigits()（与组别校验同一个 helper）
-    const isAllOnes = (v) => /^1+$/.test(normalizeDigits(v));
-    p.debugMode = isAllOnes(p.subName);
+    p.debugMode = subGroupValue === '0';
 
     if (p.debugMode) {
         runtimeNumBlocks = 1;

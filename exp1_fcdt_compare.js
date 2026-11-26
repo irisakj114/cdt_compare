@@ -66,7 +66,7 @@ const prefs = {
     numBlocks: 4,
     numTrials: 20,
     nEachCondition: 40,      // 每个 set size 40 trial（change / no-change 各 20）
-    nPractice: 16,           // 练习 16 trial：2 set size × 2 change × 4
+    nPractice: 8,            // 调试练习 8 trial：2 set size × 2 change × 2
     ITI: 500,                // ms（恒定，不随条件变化）
     retentionInterval: 1000, // ms（恒定，不随条件变化）
     stimSize: 51,
@@ -76,17 +76,10 @@ const prefs = {
     debugMode: false
 };
 
-// --- circle 版专属参数 ---
-// 名义参考圆直径 = 画布短边；色块中心所在圆再内缩「半个色块 + 该留白」，
-// 保证 51px 色块完整落在画布内（详见 getStimLocs 注释）。
-const CIRCLE_EDGE_MARGIN = 8;    // px
-// 经典变化觉察/圆形阵列研究常用约 7.3° 的垂直刺激区域、约 1.95° 的圆周半径；
-// 这里用 1.95 / 7.3 ≈ 0.267 将半径映射到画布短边，避免刺激离注视点过远。
-// 统一刺激圆外半径：参考坐标系 768 px 下为 200 px，按画布短边同比例缩放。
-const STIMULUS_CIRCLE_RADIUS_RATIO = 200 / 768;
-const CIRCLE_RADIUS_RATIO = STIMULUS_CIRCLE_RADIUS_RATIO;
-// 避开 0/90/180/270° 象限坐标轴线的最小角度；同时保证色块不跨左右中线。
-const AXIS_MARGIN_DEG = 15;      // 度
+// --- 圆环布局参数 ---
+// 半径、槽位数、最小间距等已统一放在 getStimLocs 顶部
+// （RING_SLOTS / RING_MIN_GAP / RING_RADIUS_RATIO 等），此处不再重复定义，
+// 以免同一套布局出现两套间距常量。需要按文献调整间距时只改那一处即可。
 // 探测阶段隐藏真实光标并使用自绘虚拟光标；开始实验时启用 Pointer Lock，
 // 避免真实鼠标到达屏幕边缘后 movementX/movementY 受限。
 const TRY_POINTER_LOCK = true;
@@ -261,53 +254,56 @@ document.getElementById('start-btn').addEventListener('click', async () => {
     //   保证被试在不同时间点续做时看到的是同一条试次序列。
     formalPrngBaseSeed = p.rndSeed + 7919;   // 7919 = 质数偏移，避免与练习流撞车
 
-    // 先在用户点击手势中请求 Pointer Lock 和全屏。该范式的虚拟光标
-    // 依赖相对位移覆盖整屏；锁定失败时中止，绝不降级到物理屏幕边缘受限模式。
-    if (!canvas.requestPointerLock) {
-        alert('当前浏览器不支持鼠标指针锁定，请使用最新版 Chrome 或 Edge。实验未开始。');
-        return;
-    }
-    let lockPromise;
-    try {
-        lockPromise = canvas.requestPointerLock();
-    } catch (err) {
-        alert('无法锁定鼠标指针，请允许浏览器锁定鼠标后重试。实验未开始。');
-        return;
-    }
+    // 正式模式使用 Pointer Lock，保证虚拟光标可以覆盖整屏。
+    // 调试模式不请求 Pointer Lock / 全屏：浏览器权限弹窗或 pointerlockchange
+    // 等待可能使短流程看起来卡死；调试时使用普通 mousemove 增量即可完成测试。
     let fullscreenPromise = null;
-    try {
-        if (document.documentElement.requestFullscreen) {
-            fullscreenPromise = document.documentElement.requestFullscreen();
-        }
-    } catch (err) { console.warn('Fullscreen denied.', err); }
-    if (lockPromise && typeof lockPromise.then === 'function') {
-        try { await lockPromise; } catch (err) {
-            alert('浏览器未允许锁定鼠标指针，实验未开始。请重新点击开始并允许锁定。');
+    if (!p.debugMode) {
+        if (!canvas.requestPointerLock) {
+            alert('当前浏览器不支持鼠标指针锁定，请使用最新版 Chrome 或 Edge。实验未开始。');
             return;
         }
-    }
-    // Pointer Lock 状态通过 pointerlockchange 异步更新，不能立即读取。
-    if (document.pointerLockElement !== canvas) {
-        const locked = await new Promise(resolve => {
-            let settled = false;
-            const finish = value => {
-                if (settled) return;
-                settled = true;
-                document.removeEventListener('pointerlockchange', onChange);
-                clearTimeout(timer);
-                resolve(value);
-            };
-            const onChange = () => finish(document.pointerLockElement === canvas);
-            const timer = setTimeout(() => finish(false), 1500);
-            document.addEventListener('pointerlockchange', onChange);
-        });
-        if (!locked) {
-            alert('鼠标指针锁定未生效，实验未开始。请重新点击开始并允许锁定。');
+        let lockPromise;
+        try {
+            lockPromise = canvas.requestPointerLock();
+        } catch (err) {
+            alert('无法锁定鼠标指针，请允许浏览器锁定鼠标后重试。实验未开始。');
             return;
         }
-    }
-    if (fullscreenPromise && typeof fullscreenPromise.then === 'function') {
-        try { await fullscreenPromise; } catch (err) { console.warn('Fullscreen denied.', err); }
+        try {
+            if (document.documentElement.requestFullscreen) {
+                fullscreenPromise = document.documentElement.requestFullscreen();
+            }
+        } catch (err) { console.warn('Fullscreen denied.', err); }
+        if (lockPromise && typeof lockPromise.then === 'function') {
+            try { await lockPromise; } catch (err) {
+                alert('浏览器未允许锁定鼠标指针，实验未开始。请重新点击开始并允许锁定。');
+                return;
+            }
+        }
+        // Pointer Lock 状态通过 pointerlockchange 异步更新，不能立即读取。
+        if (document.pointerLockElement !== canvas) {
+            const locked = await new Promise(resolve => {
+                let settled = false;
+                const finish = value => {
+                    if (settled) return;
+                    settled = true;
+                    document.removeEventListener('pointerlockchange', onChange);
+                    clearTimeout(timer);
+                    resolve(value);
+                };
+                const onChange = () => finish(document.pointerLockElement === canvas);
+                const timer = setTimeout(() => finish(false), 1500);
+                document.addEventListener('pointerlockchange', onChange);
+            });
+            if (!locked) {
+                alert('鼠标指针锁定未生效，实验未开始。请重新点击开始并允许锁定。');
+                return;
+            }
+        }
+        if (fullscreenPromise && typeof fullscreenPromise.then === 'function') {
+            try { await fullscreenPromise; } catch (err) { console.warn('Fullscreen denied.', err); }
+        }
     }
 
     try {
@@ -1745,69 +1741,101 @@ document.addEventListener('fullscreenchange', () => {
 });
 
 // ============================================================
-//  getStimLocs — 单圆 · 四象限布局（circle 版，2026-11-19）
+//  getStimLocs — 圆环随机位置（compare 版 CDT / CLT 统一布局）
 //
-//  ① 看不见的参考圆：圆心 = 注视点 (cx, cy)，直径 = 画布短边
-//     min(canvas.width, canvas.height)。
-//     色块中心落在「该圆内缩半个色块 + 留白」的同心圆上：
-//         R = shortSide / 2 - stimSize / 2 - CIRCLE_EDGE_MARGIN
-//     内缩是必要的：若把 51px 色块的中心直接放在半径 shortSide/2 上，
-//     上下（或左右）边缘的色块会有一半跑出画布，被试看不到完整色块。
-//     → 所有色块中心到注视点的距离严格恒为 R。虚拟光标每试次从注视点
-//       出发，因此点到任一色块的移动距离完全相同。
+//  参考 Luck & Vogel (1997) 与 2021 AP&P 圆形阵列：所有刺激中心落在
+//  同一个以注视点为圆心的圆周上，位置等角间隔、逐试次随机旋转。
 //
-//  ② 四象限均匀分配：把 setSize 个色块分到 4 个象限，各象限数量尽量均衡
-//     （3 → 随机空 1 个象限；4 → 每象限 1 个；6 → 2/2/1/1 系列）。
-//     每个半区（左 = 象限 II+III，右 = 象限 IV+I）至少各有 1 个色块，
-//     保证 CDT「点左半区色块 / 点右半区色块」两种反应都点得到。
+//  ① 圆环（"位置都必须在圆环上"）：
+//     半径 R 对所有色块恒定，每个色块到注视点距离完全相同，
+//     不会出现某个色块离注视点"过远"，也不会被挤到画布外"过近"。
+//     名义半径按画布短边缩放（768px 参考系下 200px ≈ 1.95° 视角），
+//     再内缩 半个色块 + 留白，保证 51px 色块完整可见。
 //
-//  ③ 角距离随机但均匀：每个象限的可用角区间按该象限的名额等分成若干
-//     扇区，在每个扇区的中段随机取一个角度。整体均匀铺开，具体角距随机。
-//     区间两端各留 AXIS_MARGIN_DEG，避开 0/90/180/270° 象限坐标轴线，
-//     色块既不会压线、也不会横跨左右中线，左右归属无歧义。
+//  ② 最小间距（"间距按文献设置 / 没有过近"）：
+//     圆周等分为 RING_SLOTS 个候选槽位，相邻槽位中心距
+//     = 2R·sin(π / RING_SLOTS)。把相邻色块最小中心距设为
+//     MIN_CENTER_DIST = 色块边长 + RING_MIN_GAP，反推所需最小半径
+//     R_min = MIN_CENTER_DIST / (2·sin(π / RING_SLOTS))，
+//     取 R = max(R_名义, R_min)，从几何上保证任意相邻色块不重叠、不贴边。
+//     ※ 需按具体文献调整间距时，只改 RING_SLOTS / RING_MIN_GAP 两个参数。
 //
-//  ④ 防重叠：生成多组候选，取「最小两两中心距」最大的一组。
-//     半径固定时两点距离 = 2R·sin(Δθ/2)，只需比较角度即可。
+//  ③ 位置随机 + 分布均匀（"位置选择随机 / 没有过近或过远"）：
+//     每试次给整圈一个随机旋转 φ ∈ (−半槽距, +半槽距)，幅度不超过
+//     半槽距，槽位不会跨过坐标轴线；再在等间隔槽位里随机挑 setSize 个，
+//     用"环形相邻间隔的均衡度"给组合评分，只从最均匀的一批里选，
+//     避免色块全挤在半圈（一侧留大片空白"过远"）或扎堆（"过近"）。
+//
+//  ④ 降低重复（"相同位置选择的试次较少"）：
+//     记录上一次使用的槽位组合签名，随机抽样时尽量避开重复组合；
+//     叠加连续随机旋转角，使连续试次几乎不会呈现完全相同的布局。
 // ============================================================
-//  getStimLocs — 固定 8 点圆周位置（参考 2021 AP&P）
-//
-//  预先在注视点周围建立 8 个固定、等角间隔的候选位置（45°）。
-//  每个试次只从这 8 个位置中选择 set size 个位置，不再随机生成角度。
-//  22.5° 起始角避开水平/垂直坐标轴；候选组合要求左右半区各至少
-//  一个位置，并优先保持四象限数量均衡。
-// ============================================================
+const RING_SLOTS = 8;                    // 圆周等分候选位置数（文献常用 8）
+const RING_SLOT_STEP = 360 / RING_SLOTS; // 槽位角间隔 = 45°
+const RING_MIN_GAP = 12;                 // 相邻色块最小额外留白 px
+const RING_EDGE_MARGIN = 8;              // 色块中心到画布边缘的最小留白 px
+const RING_RADIUS_RATIO = 200 / 768;     // 名义半径 / 画布短边（≈1.95° 视角）
+let lastRingSignature = null;            // 上一次使用的槽位组合，用于降低重复
+
 function getStimLocs(nItems, cx, cy) {
     const S = prefs.stimSize;
     const shortSide = Math.min(canvas.width, canvas.height);
-    const R = Math.min(
-        shortSide * CIRCLE_RADIUS_RATIO,
-        shortSide / 2 - S / 2 - CIRCLE_EDGE_MARGIN
+    const nominalR = Math.min(
+        shortSide * RING_RADIUS_RATIO,
+        shortSide / 2 - S / 2 - RING_EDGE_MARGIN
     );
-    const fixedAngles = Array.from({ length: 8 }, (_, i) =>
-        (22.5 + i * 45) * Math.PI / 180
-    );
-    const candidates = [];
-    const choose = (start, picked) => {
+    const minCenterDist = S + RING_MIN_GAP;
+    const minR = minCenterDist / (2 * Math.sin(Math.PI / RING_SLOTS));
+    const radius = Math.max(nominalR, minR);
+
+    // 枚举从 RING_SLOTS 个槽位中选 nItems 个的所有组合。
+    // 用标称角（不含旋转）判断左右半区；要求左右各至少一个色块，
+    // 保证变化觉察 / 变化定位任务左右半区都有可点色块。
+    const baseDeg = RING_SLOT_STEP / 2;   // 22.5°，避开水平/垂直坐标轴
+    const combos = [];
+    const collect = (start, picked) => {
         if (picked.length === nItems) {
-            const counts = [0, 0, 0, 0];
-            for (const idx of picked) counts[Math.floor(idx / 2)]++;
-            const left = counts[1] + counts[2];
-            const right = counts[0] + counts[3];
-            if (left < 1 || right < 1) return;
-            candidates.push({ indices: picked.slice(), score: Math.max(...counts) - Math.min(...counts) });
+            let left = 0;
+            for (const i of picked) {
+                const nominalA = (baseDeg + i * RING_SLOT_STEP) * Math.PI / 180;
+                if (Math.cos(nominalA) < 0) left++;
+            }
+            if (left < 1 || nItems - left < 1) return;
+            const gaps = [];
+            for (let k = 0; k < nItems; k++) {
+                const a = picked[k];
+                const b = k + 1 < nItems ? picked[k + 1] : picked[0] + RING_SLOTS;
+                gaps.push(b - a);
+            }
+            const mean = RING_SLOTS / nItems;
+            const uneven = gaps.reduce((s, g) => s + (g - mean) ** 2, 0);
+            combos.push({ indices: picked.slice(), uneven, sig: picked.join(',') });
             return;
         }
-        for (let i = start; i < 8; i++) {
-            picked.push(i); choose(i + 1, picked); picked.pop();
+        for (let i = start; i < RING_SLOTS; i++) {
+            picked.push(i); collect(i + 1, picked); picked.pop();
         }
     };
-    choose(0, []);
-    const bestScore = Math.min(...candidates.map(c => c.score));
-    const best = candidates.filter(c => c.score === bestScore);
-    const selected = best[randInt(0, best.length - 1)].indices;
-    shuffleArray(selected);
-    return selected.map(idx => {
-        const a = fixedAngles[idx];
-        return { x: cx + R * Math.cos(a), y: cy + R * Math.sin(a) };
+    collect(0, []);
+
+    // 只保留最均匀的一批组合，再随机挑选，且尽量避开上一次的组合。
+    const bestUneven = Math.min(...combos.map(c => c.uneven));
+    let pool = combos.filter(c => c.uneven === bestUneven);
+    if (pool.length > 1 && lastRingSignature !== null) {
+        const fresh = pool.filter(c => c.sig !== lastRingSignature);
+        if (fresh.length) pool = fresh;
+    }
+    const chosen = pool[randInt(0, pool.length - 1)];
+    lastRingSignature = chosen.sig;
+
+    // 整圈随机旋转：幅度小于半槽距，槽位不跨轴线；使绝对角度逐试次变化。
+    const rotation = (random() - 0.5) * RING_SLOT_STEP * Math.PI / 180;
+
+    const picked = chosen.indices.slice();
+    shuffleArray(picked);
+    return picked.map(idx => {
+        const a = (baseDeg + idx * RING_SLOT_STEP) * Math.PI / 180 + rotation;
+        return { x: cx + radius * Math.cos(a), y: cy + radius * Math.sin(a) };
     });
 }
+
